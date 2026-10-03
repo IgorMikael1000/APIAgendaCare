@@ -1,0 +1,52 @@
+from sqlalchemy import Column, String, BigInteger, Integer, Text
+from database import Base
+
+class ProfessionalModel(Base):
+    __tablename__ = "professionals"
+    id = Column(String(255), primary_key=True, index=True)
+    name = Column(String(255), nullable=False)
+    email = Column(String(255), unique=True, index=True, nullable=False)
+    specialty = Column(String(100), nullable=False)
+    professional_register = Column(String(100))
+    cpf = Column(String(20))
+    password_hash = Column(String(255))
+    phone = Column(String(50))
+    signature_url = Column(Text)
+
+class PatientModel(Base):
+    __tablename__ = "patients"
+    id = Column(String(255), primary_key=True, index=True)
+    professional_id = Column(String(255), nullable=False)
+    full_name = Column(String(255), nullable=False)
+    mother_name = Column(String(255), nullable=False)
+    birth_date_epoch = Column(BigInteger, nullable=False)
+    phone = Column(String(50))
+    email = Column(String(255))
+    guardian_name = Column(String(255))
+    relationship = Column(String(100))
+    notes = Column(Text)
+    created_at_epoch = Column(BigInteger, nullable=False)
+
+class AppointmentModel(Base):
+    __tablename__ = "appointments"
+    id = Column(String(255), primary_key=True, index=True)
+    professional_id = Column(String(255), nullable=False)
+    patient_id = Column(String(255), nullable=False)
+    patient_name = Column(String(255), nullable=False)
+    recurrence_rule_id = Column(String(255))
+    date_time_epoch = Column(BigInteger, nullable=False)
+    duration_minutes = Column(Integer, nullable=False)
+    status = Column(String(50), nullable=False)
+    notes = Column(Text)
+
+class EvolutionRecordModel(Base):
+    __tablename__ = "evolution_records"
+    id = Column(String(255), primary_key=True, index=True)
+    appointment_id = Column(String(255))
+    patient_id = Column(String(255), nullable=False)
+    professional_id = Column(String(255), nullable=False)
+    date_epoch = Column(BigInteger, nullable=False)
+    activity_performed = Column(Text, nullable=False)
+    performance_metrics = Column(Text)
+    textual_evolution = Column(Text, nullable=False)
+    observations = Column(Text)
