@@ -71,7 +71,7 @@ def register(prof: schemas.ProfessionalCreate, db: Session = Depends(get_db)):
         specialty_id=prof.specialtyId,
         professional_register=prof.professionalRegister,
         cpf=prof.cpf,
-        password_hash=pwd_context.hash(prof.password),
+        password_hash=pwd_context.hash(prof.password[:72]),
         auth_provider="email",
         phone=prof.phone,
         signature_url=prof.signatureUrl
@@ -99,7 +99,7 @@ def login(creds: schemas.ProfessionalLogin, db: Session = Depends(get_db)):
                 creds.password.encode("utf-8"),
             )
             if password_valid:
-                prof.password_hash = pwd_context.hash(creds.password)
+                prof.password_hash = pwd_context.hash(creds.password[:72])
                 db.commit()
         else:
             password_valid = pwd_context.verify(creds.password, prof.password_hash)
