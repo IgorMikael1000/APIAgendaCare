@@ -22,17 +22,10 @@ class ProfessionalResponse(BaseModel):
     specialtyId: Optional[str] = None
     professionalRegister: Optional[str] = None
     phone: Optional[str] = None
-    authProvider: str
-    firebaseUid: Optional[str] = None
 
 class ProfessionalLogin(BaseModel):
     email: str
     password: str
-
-class GoogleLogin(BaseModel):
-    firebase_uid: str
-    email: str
-    name: str
 
 class AppointmentSchema(BaseModel):
     id: str = Field(min_length=1)

@@ -1,5 +1,4 @@
 import hmac
-import uuid
 
 import bcrypt
 from fastapi import Body, Depends, FastAPI, HTTPException, Path, status
@@ -30,8 +29,6 @@ def professional_response(prof: models.ProfessionalModel):
         "specialtyId": prof.specialty_id,
         "professionalRegister": prof.professional_register,
         "phone": prof.phone,
-        "authProvider": prof.auth_provider,
-        "firebaseUid": prof.firebase_uid,
     }
 
 @app.get("/")
@@ -75,7 +72,6 @@ def register(prof: schemas.ProfessionalCreate, db: Session = Depends(get_db)):
         professional_register=prof.professionalRegister,
         cpf=prof.cpf,
         password_hash=hash_password(prof.password),
-        auth_provider="email",
         phone=prof.phone,
         signature_url=prof.signatureUrl
     )
@@ -115,42 +111,6 @@ def login(creds: schemas.ProfessionalLogin, db: Session = Depends(get_db)):
     if not password_valid:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="E-mail ou senha inválidos")
 
-    return professional_response(prof)
-
-@app.post("/api/v1/auth/google", response_model=schemas.ProfessionalResponse)
-def google_login(payload: schemas.GoogleLogin, db: Session = Depends(get_db)):
-    by_uid = (
-        db.query(models.ProfessionalModel)
-        .filter(models.ProfessionalModel.firebase_uid == payload.firebase_uid)
-        .first()
-    )
-    by_email = (
-        db.query(models.ProfessionalModel)
-        .filter(models.ProfessionalModel.email == payload.email)
-        .first()
-    )
-    if by_uid and by_email and by_uid.id != by_email.id:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="O UID e o e-mail pertencem a profissionais diferentes",
-        )
-
-    prof = by_uid or by_email
-    if prof:
-        return professional_response(prof)
-
-    prof = models.ProfessionalModel(
-        id=str(uuid.uuid4()),
-        name=payload.name,
-        email=payload.email,
-        specialty="",
-        password_hash=None,
-        auth_provider="google",
-        firebase_uid=payload.firebase_uid,
-    )
-    db.add(prof)
-    db.commit()
-    db.refresh(prof)
     return professional_response(prof)
 
 @app.get("/api/v1/patients/{professional_id}")
