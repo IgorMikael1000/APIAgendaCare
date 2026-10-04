@@ -1,8 +1,8 @@
 import hmac
 import uuid
 
+import bcrypt
 from fastapi import Body, Depends, FastAPI, HTTPException, Path, status
-from passlib.context import CryptContext
 from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -11,12 +11,15 @@ import models
 import schemas
 from schemas import AppointmentSchema, EvolutionRecordSchema
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 # Cria tabelas novas e aplica alterações aditivas às tabelas existentes.
 create_or_update_schema()
 
 app = FastAPI(title="AgendaCare API", version="1.0.0")
+
+def hash_password(password: str) -> str:
+    password_bytes = password.encode("utf-8")[:72]
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(password_bytes, salt).decode("utf-8")
 
 def professional_response(prof: models.ProfessionalModel):
     return {
@@ -63,10 +66,6 @@ def register(prof: schemas.ProfessionalCreate, db: Session = Depends(get_db)):
             detail="ID de profissional já cadastrado no sistema",
         )
 
-    password_bytes = prof.password.encode("utf-8")[:72]
-    safe_password = password_bytes.decode("utf-8", errors="ignore")
-    password_hash = pwd_context.hash(safe_password)
-
     db_prof = models.ProfessionalModel(
         id=prof.id,
         name=prof.name,
@@ -75,7 +74,7 @@ def register(prof: schemas.ProfessionalCreate, db: Session = Depends(get_db)):
         specialty_id=prof.specialtyId,
         professional_register=prof.professionalRegister,
         cpf=prof.cpf,
-        password_hash=password_hash,
+        password_hash=hash_password(prof.password),
         auth_provider="email",
         phone=prof.phone,
         signature_url=prof.signatureUrl
@@ -96,19 +95,22 @@ def login(creds: schemas.ProfessionalLogin, db: Session = Depends(get_db)):
     prof = db.query(models.ProfessionalModel).filter(models.ProfessionalModel.email == creds.email).first()
     password_valid = False
     if prof and prof.password_hash:
-        if pwd_context.identify(prof.password_hash) is None:
+        stored_hash_bytes = prof.password_hash.encode("utf-8")
+        if prof.password_hash.startswith(("$2a$", "$2b$", "$2y$")):
+            password_bytes = creds.password.encode("utf-8")[:72]
+            try:
+                password_valid = bcrypt.checkpw(password_bytes, stored_hash_bytes)
+            except ValueError:
+                password_valid = False
+        else:
             # Migrate passwords stored in plaintext by the previous implementation.
             password_valid = hmac.compare_digest(
-                prof.password_hash.encode("utf-8"),
+                stored_hash_bytes,
                 creds.password.encode("utf-8"),
             )
             if password_valid:
-                password_bytes = creds.password.encode("utf-8")[:72]
-                safe_password = password_bytes.decode("utf-8", errors="ignore")
-                prof.password_hash = pwd_context.hash(safe_password)
+                prof.password_hash = hash_password(creds.password)
                 db.commit()
-        else:
-            password_valid = pwd_context.verify(creds.password, prof.password_hash)
 
     if not password_valid:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="E-mail ou senha inválidos")
