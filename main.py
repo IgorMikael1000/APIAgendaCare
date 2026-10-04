@@ -21,6 +21,12 @@ def hash_password(password: str) -> str:
     return bcrypt.hashpw(password_bytes, salt).decode("utf-8")
 
 def professional_response(prof: models.ProfessionalModel):
+    if not prof.cpf:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Profissional sem CPF cadastrado; atualize os dados cadastrais",
+        )
+
     return {
         "id": prof.id,
         "name": prof.name,
@@ -29,6 +35,7 @@ def professional_response(prof: models.ProfessionalModel):
         "specialtyId": prof.specialty_id,
         "professionalRegister": prof.professional_register,
         "phone": prof.phone,
+        "cpf": prof.cpf,
     }
 
 @app.get("/")
@@ -84,7 +91,7 @@ def register(prof: schemas.ProfessionalCreate, db: Session = Depends(get_db)):
             status_code=status.HTTP_409_CONFLICT,
             detail="E-mail, CPF, telefone ou ID já cadastrados no sistema",
         )
-    return {"status": "success", "id": db_prof.id, "name": db_prof.name}
+    return professional_response(db_prof)
 
 @app.post("/api/v1/auth/login")
 def login(creds: schemas.ProfessionalLogin, db: Session = Depends(get_db)):

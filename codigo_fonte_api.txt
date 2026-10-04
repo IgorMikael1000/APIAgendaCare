@@ -124,6 +124,12 @@ def hash_password(password: str) -> str:
     return bcrypt.hashpw(password_bytes, salt).decode("utf-8")
 
 def professional_response(prof: models.ProfessionalModel):
+    if not prof.cpf:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Profissional sem CPF cadastrado; atualize os dados cadastrais",
+        )
+
     return {
         "id": prof.id,
         "name": prof.name,
@@ -132,6 +138,7 @@ def professional_response(prof: models.ProfessionalModel):
         "specialtyId": prof.specialty_id,
         "professionalRegister": prof.professional_register,
         "phone": prof.phone,
+        "cpf": prof.cpf,
     }
 
 @app.get("/")
@@ -187,7 +194,7 @@ def register(prof: schemas.ProfessionalCreate, db: Session = Depends(get_db)):
             status_code=status.HTTP_409_CONFLICT,
             detail="E-mail, CPF, telefone ou ID já cadastrados no sistema",
         )
-    return {"status": "success", "id": db_prof.id, "name": db_prof.name}
+    return professional_response(db_prof)
 
 @app.post("/api/v1/auth/login")
 def login(creds: schemas.ProfessionalLogin, db: Session = Depends(get_db)):
@@ -541,7 +548,7 @@ class ProfessionalModel(Base):
     specialty = Column(String(100), nullable=False)
     specialty_id = Column(String(255), nullable=True)
     professional_register = Column(String(100))
-    cpf = Column(String(20), unique=True)
+    cpf = Column(String(20), unique=True, nullable=False)
     password_hash = Column(String(255))
     phone = Column(String(50), unique=True)
     signature_url = Column(Text)
@@ -624,7 +631,7 @@ class ProfessionalCreate(BaseModel):
     specialty: str
     specialtyId: Optional[str] = None
     professionalRegister: Optional[str] = None
-    cpf: Optional[str] = None
+    cpf: str = Field(min_length=1)
     password: str
     phone: Optional[str] = None
     signatureUrl: Optional[str] = None

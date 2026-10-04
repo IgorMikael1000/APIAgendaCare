@@ -9,7 +9,7 @@ class ProfessionalCreate(BaseModel):
     specialty: str
     specialtyId: Optional[str] = None
     professionalRegister: Optional[str] = None
-    cpf: Optional[str] = None
+    cpf: str = Field(min_length=1)
     password: str
     phone: Optional[str] = None
     signatureUrl: Optional[str] = None

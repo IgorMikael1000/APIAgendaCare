@@ -9,7 +9,7 @@ class ProfessionalModel(Base):
     specialty = Column(String(100), nullable=False)
     specialty_id = Column(String(255), nullable=True)
     professional_register = Column(String(100))
-    cpf = Column(String(20), unique=True)
+    cpf = Column(String(20), unique=True, nullable=False)
     password_hash = Column(String(255))
     phone = Column(String(50), unique=True)
     signature_url = Column(Text)
