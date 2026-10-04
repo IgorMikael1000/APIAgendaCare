@@ -1,12 +1,13 @@
 import hmac
 import uuid
 
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import Body, Depends, FastAPI, HTTPException, Path, status
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 from database import create_or_update_schema, get_db
 import models
 import schemas
+from schemas import AppointmentSchema, EvolutionRecordSchema
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -168,3 +169,171 @@ def sync_patient(professional_id: str, patient: schemas.PatientSchema, db: Sessi
         db.add(p)
     db.commit()
     return patient
+
+@app.get(
+    "/api/v1/appointments/{professionalId}",
+    response_model=list[AppointmentSchema],
+)
+def get_appointments(
+    professional_id: str = Path(..., alias="professionalId"),
+    db: Session = Depends(get_db),
+):
+    appointments = (
+        db.query(models.AppointmentModel)
+        .filter(models.AppointmentModel.professional_id == professional_id)
+        .all()
+    )
+    return [
+        {
+            "id": appointment.id,
+            "professionalId": appointment.professional_id,
+            "patientId": appointment.patient_id,
+            "patientName": appointment.patient_name,
+            "recurrenceId": appointment.recurrence_id,
+            "recurrenceRuleId": appointment.recurrence_rule_id,
+            "dateTimeEpoch": appointment.date_time_epoch,
+            "durationMinutes": appointment.duration_minutes,
+            "status": appointment.status,
+            "notes": appointment.notes,
+        }
+        for appointment in appointments
+    ]
+
+@app.post(
+    "/api/v1/appointments/{professionalId}",
+    response_model=list[AppointmentSchema],
+)
+def sync_appointments(
+    professional_id: str = Path(..., alias="professionalId"),
+    appointments: list[AppointmentSchema] = Body(...),
+    db: Session = Depends(get_db),
+):
+    appointment_ids = [appointment.id for appointment in appointments]
+    if len(appointment_ids) != len(set(appointment_ids)):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="A lista contém IDs de agendamento duplicados",
+        )
+    if any(appointment.professionalId != professional_id for appointment in appointments):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Todos os agendamentos devem pertencer ao profissional informado",
+        )
+
+    existing_appointments = (
+        db.query(models.AppointmentModel)
+        .filter(models.AppointmentModel.id.in_(appointment_ids))
+        .all()
+    )
+    appointments_by_id = {appointment.id: appointment for appointment in existing_appointments}
+    if any(
+        appointment.professional_id != professional_id
+        for appointment in existing_appointments
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Um ou mais IDs de agendamento pertencem a outro profissional",
+        )
+
+    for appointment in appointments:
+        db_appointment = appointments_by_id.get(appointment.id)
+        if db_appointment is None:
+            db_appointment = models.AppointmentModel(id=appointment.id)
+            db.add(db_appointment)
+
+        db_appointment.professional_id = professional_id
+        db_appointment.patient_id = appointment.patientId
+        db_appointment.patient_name = appointment.patientName
+        db_appointment.recurrence_id = appointment.recurrenceId
+        db_appointment.recurrence_rule_id = appointment.recurrenceRuleId
+        db_appointment.date_time_epoch = appointment.dateTimeEpoch
+        db_appointment.duration_minutes = appointment.durationMinutes
+        db_appointment.status = appointment.status
+        db_appointment.notes = appointment.notes
+
+    db.commit()
+    return appointments
+
+@app.get(
+    "/api/v1/evolutions/{professionalId}",
+    response_model=list[EvolutionRecordSchema],
+)
+def get_evolutions(
+    professional_id: str = Path(..., alias="professionalId"),
+    db: Session = Depends(get_db),
+):
+    evolutions = (
+        db.query(models.EvolutionRecordModel)
+        .filter(models.EvolutionRecordModel.professional_id == professional_id)
+        .all()
+    )
+    return [
+        {
+            "id": evolution.id,
+            "appointmentId": evolution.appointment_id,
+            "patientId": evolution.patient_id,
+            "professionalId": evolution.professional_id,
+            "dateEpoch": evolution.date_epoch,
+            "activityPerformed": evolution.activity_performed,
+            "performanceMetrics": evolution.performance_metrics,
+            "textualEvolution": evolution.textual_evolution,
+            "observations": evolution.observations,
+            "customFields": evolution.custom_fields,
+        }
+        for evolution in evolutions
+    ]
+
+@app.post(
+    "/api/v1/evolutions/{professionalId}",
+    response_model=list[EvolutionRecordSchema],
+)
+def sync_evolutions(
+    professional_id: str = Path(..., alias="professionalId"),
+    evolutions: list[EvolutionRecordSchema] = Body(...),
+    db: Session = Depends(get_db),
+):
+    evolution_ids = [evolution.id for evolution in evolutions]
+    if len(evolution_ids) != len(set(evolution_ids)):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="A lista contém IDs de evolução duplicados",
+        )
+    if any(evolution.professionalId != professional_id for evolution in evolutions):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Todas as evoluções devem pertencer ao profissional informado",
+        )
+
+    existing_evolutions = (
+        db.query(models.EvolutionRecordModel)
+        .filter(models.EvolutionRecordModel.id.in_(evolution_ids))
+        .all()
+    )
+    evolutions_by_id = {evolution.id: evolution for evolution in existing_evolutions}
+    if any(
+        evolution.professional_id != professional_id
+        for evolution in existing_evolutions
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Um ou mais IDs de evolução pertencem a outro profissional",
+        )
+
+    for evolution in evolutions:
+        db_evolution = evolutions_by_id.get(evolution.id)
+        if db_evolution is None:
+            db_evolution = models.EvolutionRecordModel(id=evolution.id)
+            db.add(db_evolution)
+
+        db_evolution.appointment_id = evolution.appointmentId
+        db_evolution.patient_id = evolution.patientId
+        db_evolution.professional_id = professional_id
+        db_evolution.date_epoch = evolution.dateEpoch
+        db_evolution.activity_performed = evolution.activityPerformed
+        db_evolution.performance_metrics = evolution.performanceMetrics
+        db_evolution.textual_evolution = evolution.textualEvolution
+        db_evolution.observations = evolution.observations
+        db_evolution.custom_fields = evolution.customFields
+
+    db.commit()
+    return evolutions
