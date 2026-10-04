@@ -3,6 +3,8 @@ import uuid
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Path, status
 from passlib.context import CryptContext
+from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from database import create_or_update_schema, get_db
 import models
@@ -35,16 +37,32 @@ def read_root():
 
 @app.post("/api/v1/auth/register")
 def register(prof: schemas.ProfessionalCreate, db: Session = Depends(get_db)):
-    existing = db.query(models.ProfessionalModel).filter(models.ProfessionalModel.email == prof.email).first()
+    duplicate_credentials = [
+        models.ProfessionalModel.email == prof.email,
+    ]
+    if prof.cpf is not None:
+        duplicate_credentials.append(models.ProfessionalModel.cpf == prof.cpf)
+    if prof.phone is not None:
+        duplicate_credentials.append(models.ProfessionalModel.phone == prof.phone)
+
+    existing = (
+        db.query(models.ProfessionalModel)
+        .filter(or_(*duplicate_credentials))
+        .first()
+    )
     if existing:
-        existing.name = prof.name
-        existing.specialty = prof.specialty
-        existing.specialty_id = prof.specialtyId
-        existing.phone = prof.phone
-        existing.cpf = prof.cpf
-        db.commit()
-        return {"status": "success", "id": existing.id, "name": existing.name}
-    
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="E-mail, CPF ou telefone já cadastrados no sistema",
+        )
+    if db.query(models.ProfessionalModel.id).filter(
+        models.ProfessionalModel.id == prof.id
+    ).first():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="ID de profissional já cadastrado no sistema",
+        )
+
     db_prof = models.ProfessionalModel(
         id=prof.id,
         name=prof.name,
@@ -59,7 +77,14 @@ def register(prof: schemas.ProfessionalCreate, db: Session = Depends(get_db)):
         signature_url=prof.signatureUrl
     )
     db.add(db_prof)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="E-mail, CPF, telefone ou ID já cadastrados no sistema",
+        )
     return {"status": "success", "id": db_prof.id, "name": db_prof.name}
 
 @app.post("/api/v1/auth/login")
@@ -142,7 +167,20 @@ def get_patients(professional_id: str, db: Session = Depends(get_db)):
 
 @app.post("/api/v1/patients/{professional_id}")
 def sync_patient(professional_id: str, patient: schemas.PatientSchema, db: Session = Depends(get_db)):
-    p = db.query(models.PatientModel).filter(models.PatientModel.id == patient.id).first()
+    if patient.professionalId != professional_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="O paciente deve pertencer ao profissional informado",
+        )
+
+    p = (
+        db.query(models.PatientModel)
+        .filter(
+            models.PatientModel.id == patient.id,
+            models.PatientModel.professional_id == professional_id,
+        )
+        .first()
+    )
     if p:
         p.full_name = patient.fullName
         p.mother_name = patient.motherName
@@ -153,9 +191,23 @@ def sync_patient(professional_id: str, patient: schemas.PatientSchema, db: Sessi
         p.relationship = patient.relationship
         p.notes = patient.notes
     else:
+        owned_by_another_professional = (
+            db.query(models.PatientModel.id)
+            .filter(
+                models.PatientModel.id == patient.id,
+                models.PatientModel.professional_id != professional_id,
+            )
+            .first()
+        )
+        if owned_by_another_professional:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="O ID do paciente pertence a outro profissional",
+            )
+
         p = models.PatientModel(
             id=patient.id,
-        professional_id=professional_id,
+            professional_id=professional_id,
             full_name=patient.fullName,
             mother_name=patient.motherName,
             birth_date_epoch=patient.birthDateEpochMillis,
@@ -222,17 +274,40 @@ def sync_appointments(
 
     existing_appointments = (
         db.query(models.AppointmentModel)
-        .filter(models.AppointmentModel.id.in_(appointment_ids))
+        .filter(
+            models.AppointmentModel.id.in_(appointment_ids),
+            models.AppointmentModel.professional_id == professional_id,
+        )
         .all()
     )
     appointments_by_id = {appointment.id: appointment for appointment in existing_appointments}
-    if any(
-        appointment.professional_id != professional_id
-        for appointment in existing_appointments
-    ):
+    foreign_appointments = (
+        db.query(models.AppointmentModel.id)
+        .filter(
+            models.AppointmentModel.id.in_(appointment_ids),
+            models.AppointmentModel.professional_id != professional_id,
+        )
+        .first()
+    )
+    if foreign_appointments:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Um ou mais IDs de agendamento pertencem a outro profissional",
+        )
+
+    patient_ids = {appointment.patientId for appointment in appointments}
+    foreign_patients = (
+        db.query(models.PatientModel.id)
+        .filter(
+            models.PatientModel.id.in_(patient_ids),
+            models.PatientModel.professional_id != professional_id,
+        )
+        .first()
+    )
+    if foreign_patients:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Um ou mais pacientes pertencem a outro profissional",
         )
 
     for appointment in appointments:
@@ -306,17 +381,59 @@ def sync_evolutions(
 
     existing_evolutions = (
         db.query(models.EvolutionRecordModel)
-        .filter(models.EvolutionRecordModel.id.in_(evolution_ids))
+        .filter(
+            models.EvolutionRecordModel.id.in_(evolution_ids),
+            models.EvolutionRecordModel.professional_id == professional_id,
+        )
         .all()
     )
     evolutions_by_id = {evolution.id: evolution for evolution in existing_evolutions}
-    if any(
-        evolution.professional_id != professional_id
-        for evolution in existing_evolutions
-    ):
+    foreign_evolutions = (
+        db.query(models.EvolutionRecordModel.id)
+        .filter(
+            models.EvolutionRecordModel.id.in_(evolution_ids),
+            models.EvolutionRecordModel.professional_id != professional_id,
+        )
+        .first()
+    )
+    if foreign_evolutions:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Um ou mais IDs de evolução pertencem a outro profissional",
+        )
+
+    patient_ids = {evolution.patientId for evolution in evolutions}
+    foreign_patients = (
+        db.query(models.PatientModel.id)
+        .filter(
+            models.PatientModel.id.in_(patient_ids),
+            models.PatientModel.professional_id != professional_id,
+        )
+        .first()
+    )
+    if foreign_patients:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Um ou mais pacientes pertencem a outro profissional",
+        )
+
+    appointment_ids = {
+        evolution.appointmentId
+        for evolution in evolutions
+        if evolution.appointmentId is not None
+    }
+    foreign_linked_appointments = (
+        db.query(models.AppointmentModel.id)
+        .filter(
+            models.AppointmentModel.id.in_(appointment_ids),
+            models.AppointmentModel.professional_id != professional_id,
+        )
+        .first()
+    )
+    if foreign_linked_appointments:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Um ou mais agendamentos pertencem a outro profissional",
         )
 
     for evolution in evolutions:

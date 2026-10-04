@@ -1,9 +1,9 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
 from typing import Literal
 
 class ProfessionalCreate(BaseModel):
-    id: str
+    id: str = Field(min_length=1)
     name: str
     email: str
     specialty: str
@@ -35,9 +35,9 @@ class GoogleLogin(BaseModel):
     name: str
 
 class AppointmentSchema(BaseModel):
-    id: str
-    professionalId: str
-    patientId: str
+    id: str = Field(min_length=1)
+    professionalId: str = Field(min_length=1)
+    patientId: str = Field(min_length=1)
     patientName: str
     recurrenceId: Optional[str] = None
     recurrenceRuleId: Optional[str] = None
@@ -54,10 +54,10 @@ class AppointmentSchema(BaseModel):
     notes: Optional[str] = None
 
 class EvolutionRecordSchema(BaseModel):
-    id: str
-    appointmentId: Optional[str] = None
-    patientId: str
-    professionalId: str
+    id: str = Field(min_length=1)
+    appointmentId: Optional[str] = Field(default=None, min_length=1)
+    patientId: str = Field(min_length=1)
+    professionalId: str = Field(min_length=1)
     dateEpoch: int
     activityPerformed: str
     performanceMetrics: Optional[str] = None
@@ -66,8 +66,8 @@ class EvolutionRecordSchema(BaseModel):
     customFields: Optional[Dict[str, Any]] = None
 
 class PatientSchema(BaseModel):
-    id: str
-    professionalId: str
+    id: str = Field(min_length=1)
+    professionalId: str = Field(min_length=1)
     fullName: str
     motherName: str
     birthDateEpochMillis: int

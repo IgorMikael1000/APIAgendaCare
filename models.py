@@ -9,11 +9,11 @@ class ProfessionalModel(Base):
     specialty = Column(String(100), nullable=False)
     specialty_id = Column(String(255), nullable=True)
     professional_register = Column(String(100))
-    cpf = Column(String(20))
+    cpf = Column(String(20), unique=True)
     password_hash = Column(String(255))
     auth_provider = Column(String(50), nullable=False, default="email", server_default="email")
     firebase_uid = Column(String(255), nullable=True, unique=True, index=True)
-    phone = Column(String(50))
+    phone = Column(String(50), unique=True)
     signature_url = Column(Text)
 
 class PatientModel(Base):

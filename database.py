@@ -41,6 +41,45 @@ def create_or_update_schema():
                 for index in table.indexes:
                     index.create(bind=connection, checkfirst=True)
 
+        for table in Base.metadata.sorted_tables:
+            if not inspector.has_table(table.name):
+                continue
+
+            unique_columns = {
+                tuple(constraint.get("column_names", []))
+                for constraint in inspector.get_unique_constraints(table.name)
+            }
+            unique_indexes = {
+                tuple(index.get("column_names", []))
+                for index in inspector.get_indexes(table.name)
+                if index.get("unique")
+            }
+            for column in table.columns:
+                if not column.unique:
+                    continue
+                column_key = (column.name,)
+                if column_key in unique_columns or column_key in unique_indexes:
+                    continue
+
+                constraint_name = f"uq_{table.name}_{column.name}"
+                if connection.dialect.name == "sqlite":
+                    connection.execute(
+                        text(
+                            f"CREATE UNIQUE INDEX "
+                            f"{preparer.quote(constraint_name)} "
+                            f"ON {preparer.quote(table.name)} "
+                            f"({preparer.quote(column.name)})"
+                        )
+                    )
+                else:
+                    connection.execute(
+                        text(
+                            f"ALTER TABLE {preparer.quote(table.name)} "
+                            f"ADD CONSTRAINT {preparer.quote(constraint_name)} "
+                            f"UNIQUE ({preparer.quote(column.name)})"
+                        )
+                    )
+
 def get_db():
     db = SessionLocal()
     try:
