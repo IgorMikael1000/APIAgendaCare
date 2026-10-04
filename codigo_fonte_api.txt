@@ -1,0 +1,252 @@
+==================================================
+     PROJETO API AGENDACARE - CODIGO FONTE
+==================================================
+
+
+
+==================================================
+ARQUIVO: .\database.py
+==================================================
+
+import os
+from sqlalchemy import create_engine
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+
+# A URL do Neon PostgreSQL será pega nas variáveis de ambiente do Render
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://usuario:senha@host/dbname?sslmode=require")
+
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+==================================================
+ARQUIVO: .\main.py
+==================================================
+
+from fastapi import FastAPI, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+from database import engine, get_db, Base
+import models
+import schemas
+
+# Cria as tabelas automaticamente se não existirem
+Base.metadata.create_all(bind=engine)
+
+app = FastAPI(title="AgendaCare API", version="1.0.0")
+
+@app.get("/")
+def read_root():
+    return {"status": "online", "app": "AgendaCare API"}
+
+@app.post("/api/v1/auth/register")
+def register(prof: schemas.ProfessionalCreate, db: Session = Depends(get_db)):
+    existing = db.query(models.ProfessionalModel).filter(models.ProfessionalModel.email == prof.email).first()
+    if existing:
+        existing.name = prof.name
+        existing.specialty = prof.specialty
+        existing.phone = prof.phone
+        existing.cpf = prof.cpf
+        db.commit()
+        return {"status": "success", "id": existing.id, "name": existing.name}
+    
+    db_prof = models.ProfessionalModel(
+        id=prof.id,
+        name=prof.name,
+        email=prof.email,
+        specialty=prof.specialty,
+        professional_register=prof.professionalRegister,
+        cpf=prof.cpf,
+        password_hash=prof.password,
+        phone=prof.phone,
+        signature_url=prof.signatureUrl
+    )
+    db.add(db_prof)
+    db.commit()
+    return {"status": "success", "id": db_prof.id, "name": db_prof.name}
+
+@app.post("/api/v1/auth/login")
+def login(creds: schemas.ProfessionalLogin, db: Session = Depends(get_db)):
+    prof = db.query(models.ProfessionalModel).filter(models.ProfessionalModel.email == creds.email).first()
+    if not prof or prof.password_hash != creds.password:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="E-mail ou senha inválidos")
+    
+    return {
+        "id": prof.id,
+        "name": prof.name,
+        "email": prof.email,
+        "specialty": prof.specialty,
+        "professionalRegister": prof.professional_register,
+        "phone": prof.phone
+    }
+
+@app.get("/api/v1/patients/{professional_id}")
+def get_patients(professional_id: str, db: Session = Depends(get_db)):
+    patients = db.query(models.PatientModel).filter(models.PatientModel.professional_id == professional_id).all()
+    result = []
+    for p in patients:
+        result.append({
+            "id": p.id,
+            "professionalId": p.professional_id,
+            "fullName": p.full_name,
+            "motherName": p.mother_name,
+            "birthDateEpochMillis": p.birth_date_epoch,
+            "phone": p.phone,
+            "email": p.email,
+            "guardianName": p.guardian_name,
+            "relationship": p.relationship,
+            "notes": p.notes,
+            "createdAtEpochMillis": p.created_at_epoch
+        })
+    return result
+
+@app.post("/api/v1/patients/{professional_id}")
+def sync_patient(professional_id: str, patient: schemas.PatientSchema, db: Session = Depends(get_db)):
+    p = db.query(models.PatientModel).filter(models.PatientModel.id == patient.id).first()
+    if p:
+        p.full_name = patient.fullName
+        p.mother_name = patient.motherName
+        p.birth_date_epoch = patient.birthDateEpochMillis
+        p.phone = patient.phone
+        p.email = patient.email
+        p.guardian_name = patient.guardianName
+        p.relationship = patient.relationship
+        p.notes = patient.notes
+    else:
+        p = models.PatientModel(
+            id=patient.id,
+        professional_id=professional_id,
+            full_name=patient.fullName,
+            mother_name=patient.motherName,
+            birth_date_epoch=patient.birthDateEpochMillis,
+            phone=patient.phone,
+            email=patient.email,
+            guardian_name=patient.guardianName,
+            relationship=patient.relationship,
+            notes=patient.notes,
+            created_at_epoch=patient.createdAtEpochMillis
+        )
+        db.add(p)
+    db.commit()
+    return patient
+
+==================================================
+ARQUIVO: .\models.py
+==================================================
+
+from sqlalchemy import Column, String, BigInteger, Integer, Text
+from database import Base
+
+class ProfessionalModel(Base):
+    __tablename__ = "professionals"
+    id = Column(String(255), primary_key=True, index=True)
+    name = Column(String(255), nullable=False)
+    email = Column(String(255), unique=True, index=True, nullable=False)
+    specialty = Column(String(100), nullable=False)
+    professional_register = Column(String(100))
+    cpf = Column(String(20))
+    password_hash = Column(String(255))
+    phone = Column(String(50))
+    signature_url = Column(Text)
+
+class PatientModel(Base):
+    __tablename__ = "patients"
+    id = Column(String(255), primary_key=True, index=True)
+    professional_id = Column(String(255), nullable=False)
+    full_name = Column(String(255), nullable=False)
+    mother_name = Column(String(255), nullable=False)
+    birth_date_epoch = Column(BigInteger, nullable=False)
+    phone = Column(String(50))
+    email = Column(String(255))
+    guardian_name = Column(String(255))
+    relationship = Column(String(100))
+    notes = Column(Text)
+    created_at_epoch = Column(BigInteger, nullable=False)
+
+class AppointmentModel(Base):
+    __tablename__ = "appointments"
+    id = Column(String(255), primary_key=True, index=True)
+    professional_id = Column(String(255), nullable=False)
+    patient_id = Column(String(255), nullable=False)
+    patient_name = Column(String(255), nullable=False)
+    recurrence_rule_id = Column(String(255))
+    date_time_epoch = Column(BigInteger, nullable=False)
+    duration_minutes = Column(Integer, nullable=False)
+    status = Column(String(50), nullable=False)
+    notes = Column(Text)
+
+class EvolutionRecordModel(Base):
+    __tablename__ = "evolution_records"
+    id = Column(String(255), primary_key=True, index=True)
+    appointment_id = Column(String(255))
+    patient_id = Column(String(255), nullable=False)
+    professional_id = Column(String(255), nullable=False)
+    date_epoch = Column(BigInteger, nullable=False)
+    activity_performed = Column(Text, nullable=False)
+    performance_metrics = Column(Text)
+    textual_evolution = Column(Text, nullable=False)
+    observations = Column(Text)
+
+==================================================
+ARQUIVO: .\Procfile
+==================================================
+
+web: uvicorn main:app --host 0.0.0.0 --port $PORT
+
+==================================================
+ARQUIVO: .\requirements.txt
+==================================================
+
+fastapi>=0.111.0
+uvicorn>=0.30.0
+sqlalchemy>=2.0.30
+psycopg[binary]>=3.1.0
+pydantic>=2.7.0
+
+==================================================
+ARQUIVO: .\runtime.txt
+==================================================
+
+python-3.11.9
+
+==================================================
+ARQUIVO: .\schemas.py
+==================================================
+
+from pydantic import BaseModel
+from typing import Optional, Dict, Any
+
+class ProfessionalCreate(BaseModel):
+    id: str
+    name: str
+    email: str
+    specialty: str
+    professionalRegister: Optional[str] = None
+    cpf: Optional[str] = None
+    password: Optional[str] = None
+    phone: Optional[str] = None
+    signatureUrl: Optional[str] = None
+
+class ProfessionalLogin(BaseModel):
+    email: str
+    password: str
+
+class PatientSchema(BaseModel):
+    id: str
+    professionalId: str
+    fullName: str
+    motherName: str
+    birthDateEpochMillis: int
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    guardianName: Optional[str] = None
+    relationship: Optional[str] = None
+    notes: Optional[str] = None
+    createdAtEpochMillis: int

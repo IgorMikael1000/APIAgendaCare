@@ -1,13 +1,32 @@
+import hmac
+import uuid
+
 from fastapi import FastAPI, Depends, HTTPException, status
+from passlib.context import CryptContext
 from sqlalchemy.orm import Session
-from database import engine, get_db, Base
+from database import create_or_update_schema, get_db
 import models
 import schemas
 
-# Cria as tabelas automaticamente se não existirem
-Base.metadata.create_all(bind=engine)
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+# Cria tabelas novas e aplica alterações aditivas às tabelas existentes.
+create_or_update_schema()
 
 app = FastAPI(title="AgendaCare API", version="1.0.0")
+
+def professional_response(prof: models.ProfessionalModel):
+    return {
+        "id": prof.id,
+        "name": prof.name,
+        "email": prof.email,
+        "specialty": prof.specialty,
+        "specialtyId": prof.specialty_id,
+        "professionalRegister": prof.professional_register,
+        "phone": prof.phone,
+        "authProvider": prof.auth_provider,
+        "firebaseUid": prof.firebase_uid,
+    }
 
 @app.get("/")
 def read_root():
@@ -19,6 +38,7 @@ def register(prof: schemas.ProfessionalCreate, db: Session = Depends(get_db)):
     if existing:
         existing.name = prof.name
         existing.specialty = prof.specialty
+        existing.specialty_id = prof.specialtyId
         existing.phone = prof.phone
         existing.cpf = prof.cpf
         db.commit()
@@ -29,9 +49,11 @@ def register(prof: schemas.ProfessionalCreate, db: Session = Depends(get_db)):
         name=prof.name,
         email=prof.email,
         specialty=prof.specialty,
+        specialty_id=prof.specialtyId,
         professional_register=prof.professionalRegister,
         cpf=prof.cpf,
-        password_hash=prof.password,
+        password_hash=pwd_context.hash(prof.password),
+        auth_provider="email",
         phone=prof.phone,
         signature_url=prof.signatureUrl
     )
@@ -42,17 +64,60 @@ def register(prof: schemas.ProfessionalCreate, db: Session = Depends(get_db)):
 @app.post("/api/v1/auth/login")
 def login(creds: schemas.ProfessionalLogin, db: Session = Depends(get_db)):
     prof = db.query(models.ProfessionalModel).filter(models.ProfessionalModel.email == creds.email).first()
-    if not prof or prof.password_hash != creds.password:
+    password_valid = False
+    if prof and prof.password_hash:
+        if pwd_context.identify(prof.password_hash) is None:
+            # Migrate passwords stored in plaintext by the previous implementation.
+            password_valid = hmac.compare_digest(
+                prof.password_hash.encode("utf-8"),
+                creds.password.encode("utf-8"),
+            )
+            if password_valid:
+                prof.password_hash = pwd_context.hash(creds.password)
+                db.commit()
+        else:
+            password_valid = pwd_context.verify(creds.password, prof.password_hash)
+
+    if not password_valid:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="E-mail ou senha inválidos")
-    
-    return {
-        "id": prof.id,
-        "name": prof.name,
-        "email": prof.email,
-        "specialty": prof.specialty,
-        "professionalRegister": prof.professional_register,
-        "phone": prof.phone
-    }
+
+    return professional_response(prof)
+
+@app.post("/api/v1/auth/google", response_model=schemas.ProfessionalResponse)
+def google_login(payload: schemas.GoogleLogin, db: Session = Depends(get_db)):
+    by_uid = (
+        db.query(models.ProfessionalModel)
+        .filter(models.ProfessionalModel.firebase_uid == payload.firebase_uid)
+        .first()
+    )
+    by_email = (
+        db.query(models.ProfessionalModel)
+        .filter(models.ProfessionalModel.email == payload.email)
+        .first()
+    )
+    if by_uid and by_email and by_uid.id != by_email.id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="O UID e o e-mail pertencem a profissionais diferentes",
+        )
+
+    prof = by_uid or by_email
+    if prof:
+        return professional_response(prof)
+
+    prof = models.ProfessionalModel(
+        id=str(uuid.uuid4()),
+        name=payload.name,
+        email=payload.email,
+        specialty="",
+        password_hash=None,
+        auth_provider="google",
+        firebase_uid=payload.firebase_uid,
+    )
+    db.add(prof)
+    db.commit()
+    db.refresh(prof)
+    return professional_response(prof)
 
 @app.get("/api/v1/patients/{professional_id}")
 def get_patients(professional_id: str, db: Session = Depends(get_db)):

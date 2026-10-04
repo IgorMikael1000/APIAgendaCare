@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, BigInteger, Integer, Text
+from sqlalchemy import Column, String, BigInteger, Integer, Text, JSON
 from database import Base
 
 class ProfessionalModel(Base):
@@ -7,9 +7,12 @@ class ProfessionalModel(Base):
     name = Column(String(255), nullable=False)
     email = Column(String(255), unique=True, index=True, nullable=False)
     specialty = Column(String(100), nullable=False)
+    specialty_id = Column(String(255), nullable=True)
     professional_register = Column(String(100))
     cpf = Column(String(20))
     password_hash = Column(String(255))
+    auth_provider = Column(String(50), nullable=False, default="email", server_default="email")
+    firebase_uid = Column(String(255), nullable=True, unique=True, index=True)
     phone = Column(String(50))
     signature_url = Column(Text)
 
@@ -33,6 +36,7 @@ class AppointmentModel(Base):
     professional_id = Column(String(255), nullable=False)
     patient_id = Column(String(255), nullable=False)
     patient_name = Column(String(255), nullable=False)
+    recurrence_id = Column(String(255))
     recurrence_rule_id = Column(String(255))
     date_time_epoch = Column(BigInteger, nullable=False)
     duration_minutes = Column(Integer, nullable=False)
@@ -50,3 +54,4 @@ class EvolutionRecordModel(Base):
     performance_metrics = Column(Text)
     textual_evolution = Column(Text, nullable=False)
     observations = Column(Text)
+    custom_fields = Column(JSON)
