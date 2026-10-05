@@ -219,6 +219,23 @@ def login(creds: schemas.ProfessionalLogin, db: Session = Depends(get_db)):
 
     return professional_response(prof)
 
+@app.post("/api/v1/auth/validate-reset")
+def validate_reset(data: schemas.ResetValidation, db: Session = Depends(get_db)):
+    professional = (
+        db.query(models.ProfessionalModel)
+        .filter(
+            models.ProfessionalModel.cpf == data.cpf,
+            models.ProfessionalModel.email == data.email,
+        )
+        .first()
+    )
+    if professional is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="CPF ou E-mail incorretos",
+        )
+    return {"message": "Dados validados com sucesso"}
+
 @app.delete("/api/v1/auth/delete-account")
 def delete_account(
     current_user: models.ProfessionalModel = Depends(get_current_user),

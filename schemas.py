@@ -29,6 +29,10 @@ class ProfessionalLogin(BaseModel):
     email: str
     password: str
 
+class ResetValidation(BaseModel):
+    cpf: str
+    email: str
+
 class AppointmentSchema(BaseModel):
     id: str = Field(min_length=1)
     professionalId: str = Field(min_length=1)
