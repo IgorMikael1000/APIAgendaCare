@@ -197,6 +197,36 @@ def sync_patient(professional_id: str, patient: schemas.PatientSchema, db: Sessi
     db.commit()
     return patient
 
+@app.delete("/api/v1/patients/{professionalId}/{patientId}")
+def delete_patient(
+    professional_id: str = Path(..., alias="professionalId"),
+    patient_id: str = Path(..., alias="patientId"),
+    db: Session = Depends(get_db),
+):
+    patient = (
+        db.query(models.PatientModel)
+        .filter(
+            models.PatientModel.id == patient_id,
+            models.PatientModel.professional_id == professional_id,
+        )
+        .first()
+    )
+    if patient is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Paciente não encontrado",
+        )
+
+    db.query(models.EvolutionRecordModel).filter(
+        models.EvolutionRecordModel.patient_id == patient_id,
+    ).delete(synchronize_session=False)
+    db.query(models.AppointmentModel).filter(
+        models.AppointmentModel.patient_id == patient_id,
+    ).delete(synchronize_session=False)
+    db.delete(patient)
+    db.commit()
+    return {"status": "success"}
+
 @app.get(
     "/api/v1/appointments/{professionalId}",
     response_model=list[AppointmentSchema],
@@ -325,11 +355,28 @@ def delete_appointment(
             detail="Agendamento não encontrado",
         )
 
+    appointments_query = db.query(models.AppointmentModel).filter(
+        models.AppointmentModel.professional_id == professional_id,
+    )
     if delete_all and appointment.recurrence_id is not None:
-        db.query(models.AppointmentModel).filter(
-            models.AppointmentModel.professional_id == professional_id,
+        appointments_query = appointments_query.filter(
             models.AppointmentModel.recurrence_id == appointment.recurrence_id,
+        )
+    else:
+        appointments_query = appointments_query.filter(
+            models.AppointmentModel.id == appointment_id,
+        )
+
+    appointment_ids = [
+        row.id for row in appointments_query.with_entities(models.AppointmentModel.id).all()
+    ]
+    if appointment_ids:
+        db.query(models.EvolutionRecordModel).filter(
+            models.EvolutionRecordModel.appointment_id.in_(appointment_ids),
         ).delete(synchronize_session=False)
+
+    if delete_all and appointment.recurrence_id is not None:
+        appointments_query.delete(synchronize_session=False)
     else:
         db.delete(appointment)
 
