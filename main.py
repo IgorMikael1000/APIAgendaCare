@@ -1,7 +1,7 @@
 import hmac
 
 import bcrypt
-from fastapi import Body, Depends, FastAPI, HTTPException, Path, status
+from fastapi import Body, Depends, FastAPI, HTTPException, Path, Query, status
 from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -303,6 +303,38 @@ def sync_appointments(
 
     db.commit()
     return appointments
+
+@app.delete("/api/v1/appointments/{professionalId}/{appointmentId}")
+def delete_appointment(
+    professional_id: str = Path(..., alias="professionalId"),
+    appointment_id: str = Path(..., alias="appointmentId"),
+    delete_all: bool = Query(False, alias="deleteAll"),
+    db: Session = Depends(get_db),
+):
+    appointment = (
+        db.query(models.AppointmentModel)
+        .filter(
+            models.AppointmentModel.id == appointment_id,
+            models.AppointmentModel.professional_id == professional_id,
+        )
+        .first()
+    )
+    if appointment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Agendamento não encontrado",
+        )
+
+    if delete_all and appointment.recurrence_id is not None:
+        db.query(models.AppointmentModel).filter(
+            models.AppointmentModel.professional_id == professional_id,
+            models.AppointmentModel.recurrence_id == appointment.recurrence_id,
+        ).delete(synchronize_session=False)
+    else:
+        db.delete(appointment)
+
+    db.commit()
+    return {"status": "success"}
 
 @app.get(
     "/api/v1/evolutions/{professionalId}",
