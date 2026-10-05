@@ -1,4 +1,5 @@
 import hmac
+from datetime import datetime, timedelta, timezone
 
 import bcrypt
 from fastapi import Body, Depends, FastAPI, HTTPException, Path, Query, status
@@ -44,6 +45,17 @@ def read_root():
 
 @app.post("/api/v1/auth/register")
 def register(prof: schemas.ProfessionalCreate, db: Session = Depends(get_db)):
+    existing_device = (
+        db.query(models.ProfessionalModel.id)
+        .filter(models.ProfessionalModel.device_id == prof.deviceId)
+        .first()
+    )
+    if existing_device:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Este dispositivo já utilizou o período de teste gratuito.",
+        )
+
     duplicate_credentials = [
         models.ProfessionalModel.email == prof.email,
     ]
@@ -72,6 +84,13 @@ def register(prof: schemas.ProfessionalCreate, db: Session = Depends(get_db)):
 
     db_prof = models.ProfessionalModel(
         id=prof.id,
+        device_id=prof.deviceId,
+        firebase_uid=prof.firebaseUid,
+        plan_type="FREE",
+        trial_ends_at=int(
+            (datetime.now(timezone.utc) + timedelta(days=7)).timestamp() * 1000
+        ),
+        subscription_status="TRIAL",
         name=prof.name,
         email=prof.email,
         specialty=prof.specialty,
@@ -87,9 +106,19 @@ def register(prof: schemas.ProfessionalCreate, db: Session = Depends(get_db)):
         db.commit()
     except IntegrityError:
         db.rollback()
+        existing_device = (
+            db.query(models.ProfessionalModel.id)
+            .filter(models.ProfessionalModel.device_id == prof.deviceId)
+            .first()
+        )
+        if existing_device:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Este dispositivo já utilizou o período de teste gratuito.",
+            )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="E-mail, CPF, telefone ou ID já cadastrados no sistema",
+            detail="E-mail, CPF, telefone, Firebase UID ou ID já cadastrados no sistema",
         )
     return professional_response(db_prof)
 

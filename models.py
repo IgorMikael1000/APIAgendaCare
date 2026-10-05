@@ -4,6 +4,11 @@ from database import Base
 class ProfessionalModel(Base):
     __tablename__ = "professionals"
     id = Column(String(255), primary_key=True, index=True)
+    device_id = Column(String(255), unique=True, index=True)
+    firebase_uid = Column(String(255), unique=True, nullable=True)
+    plan_type = Column(String(50), default="FREE")
+    trial_ends_at = Column(BigInteger)
+    subscription_status = Column(String(50), default="TRIAL")
     name = Column(String(255), nullable=False)
     email = Column(String(255), unique=True, index=True, nullable=False)
     specialty = Column(String(100), nullable=False)

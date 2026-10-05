@@ -4,6 +4,8 @@ from typing import Literal
 
 class ProfessionalCreate(BaseModel):
     id: str = Field(min_length=1)
+    deviceId: str = Field(min_length=1)
+    firebaseUid: Optional[str] = None
     name: str
     email: str
     specialty: str
