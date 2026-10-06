@@ -9,6 +9,7 @@ class ProfessionalModel(Base):
     plan_type = Column(String(50), default="FREE")
     trial_ends_at = Column(BigInteger)
     subscription_status = Column(String(50), default="TRIAL")
+    subscription_expires_at = Column(BigInteger, nullable=True)
     name = Column(String(255), nullable=False)
     email = Column(String(255), unique=True, index=True, nullable=False)
     specialty = Column(String(100), nullable=False)

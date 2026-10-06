@@ -25,6 +25,7 @@ class ProfessionalResponse(BaseModel):
     planType: Optional[str] = None
     subscriptionStatus: Optional[str] = None
     trialEndsAt: Optional[int] = None
+    subscriptionExpiresAt: Optional[int] = None
     specialtyId: Optional[str] = None
     professionalRegister: Optional[str] = None
     phone: Optional[str] = None
@@ -37,6 +38,10 @@ class UserProfileUpdate(BaseModel):
     phone_number: Optional[str] = None
     specialty: Optional[str] = None
     email: Optional[str] = None
+
+class SubscriptionVerifyRequest(BaseModel):
+    purchaseToken: str
+    planType: Literal["MONTHLY", "QUARTERLY", "SEMIANNUAL", "ANNUAL"]
 
 class ResetValidation(BaseModel):
     cpf: str

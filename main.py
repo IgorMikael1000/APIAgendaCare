@@ -112,6 +112,7 @@ def professional_response(prof: models.ProfessionalModel):
         "planType": prof.plan_type,
         "subscriptionStatus": prof.subscription_status,
         "trialEndsAt": prof.trial_ends_at,
+        "subscriptionExpiresAt": prof.subscription_expires_at,
     }
 
 @app.get("/")
@@ -229,6 +230,34 @@ def login(creds: schemas.ProfessionalLogin, db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="E-mail ou senha inválidos")
 
     return professional_response(prof)
+
+@app.post("/api/v1/subscription/verify")
+def verify_subscription(
+    sub_data: schemas.SubscriptionVerifyRequest,
+    current_user: models.ProfessionalModel = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    plan_durations = {
+        "MONTHLY": 30,
+        "QUARTERLY": 90,
+        "SEMIANNUAL": 180,
+        "ANNUAL": 365,
+    }
+    expiration = datetime.now(timezone.utc) + timedelta(
+        days=plan_durations[sub_data.planType]
+    )
+    expiration_timestamp = int(expiration.timestamp() * 1000)
+
+    current_user.subscription_status = "ACTIVE"
+    current_user.plan_type = sub_data.planType
+    current_user.subscription_expires_at = expiration_timestamp
+    db.commit()
+
+    return {
+        "status": "success",
+        "message": "Assinatura ativada com sucesso",
+        "subscriptionExpiresAt": expiration_timestamp,
+    }
 
 def restore_firebase_email(firebase_uid: str, email: str, firebase_app) -> None:
     try:
@@ -385,6 +414,10 @@ def update_profile(
             "email": current_user.email,
             "specialty": current_user.specialty,
             "phone_number": current_user.phone,
+            "planType": current_user.plan_type,
+            "subscriptionStatus": current_user.subscription_status,
+            "trialEndsAt": current_user.trial_ends_at,
+            "subscriptionExpiresAt": current_user.subscription_expires_at,
         },
     }
 
