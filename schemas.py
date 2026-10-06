@@ -34,6 +34,9 @@ class ProfessionalLogin(BaseModel):
     email: str
     password: str
 
+class GoogleLoginRequest(BaseModel):
+    idToken: str
+
 class UserProfileUpdate(BaseModel):
     phone_number: Optional[str] = None
     specialty: Optional[str] = None

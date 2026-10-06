@@ -36,6 +36,22 @@ firebase_app_lock = Lock()
 logger = logging.getLogger(__name__)
 
 
+def get_firebase_app():
+    try:
+        return firebase_admin.get_app()
+    except ValueError:
+        with firebase_app_lock:
+            try:
+                return firebase_admin.get_app()
+            except ValueError:
+                firebase_cred_env = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
+                if firebase_cred_env:
+                    cred_dict = json.loads(firebase_cred_env)
+                    cred = credentials.Certificate(cred_dict)
+                    return firebase_admin.initialize_app(cred)
+                return firebase_admin.initialize_app()
+
+
 def get_current_user(
     bearer_credentials: Optional[HTTPAuthorizationCredentials] = Depends(
         bearer_scheme
@@ -49,21 +65,7 @@ def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    try:
-        firebase_app = firebase_admin.get_app()
-    except ValueError:
-        with firebase_app_lock:
-            try:
-                firebase_app = firebase_admin.get_app()
-            except ValueError:
-                firebase_cred_env = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
-                if firebase_cred_env:
-                    cred_dict = json.loads(firebase_cred_env)
-                    cred = credentials.Certificate(cred_dict)
-                    firebase_app = firebase_admin.initialize_app(cred)
-                else:
-                    firebase_app = firebase_admin.initialize_app()
-
+    firebase_app = get_firebase_app()
     try:
         decoded_token = auth.verify_id_token(
             bearer_credentials.credentials,
@@ -239,6 +241,60 @@ def login(creds: schemas.ProfessionalLogin, db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="E-mail ou senha inválidos")
 
     return professional_response(prof)
+
+@app.post("/api/v1/auth/google")
+def google_login(data: schemas.GoogleLoginRequest, db: Session = Depends(get_db)):
+    firebase_app = get_firebase_app()
+    try:
+        decoded_token = auth.verify_id_token(
+            data.idToken,
+            app=firebase_app,
+            check_revoked=True,
+        )
+    except (auth.InvalidIdTokenError, auth.UserDisabledError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token Firebase inválido ou expirado",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+    except exceptions.FirebaseError as exc:
+        logger.exception("Não foi possível validar o token de login Google")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Não foi possível validar o token no Firebase",
+        ) from exc
+
+    firebase_uid = decoded_token.get("uid")
+    email = decoded_token.get("email")
+    if not firebase_uid:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token Firebase inválido ou expirado",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    matching_user = (
+        db.query(models.ProfessionalModel)
+        .filter(
+            or_(
+                models.ProfessionalModel.firebase_uid == firebase_uid,
+                models.ProfessionalModel.email == email,
+            )
+        )
+        .first()
+        if email
+        else db.query(models.ProfessionalModel)
+        .filter(models.ProfessionalModel.firebase_uid == firebase_uid)
+        .first()
+    )
+    if matching_user is not None:
+        return professional_response(matching_user)
+
+    return {
+        "status": "needs_registration",
+        "email": email,
+        "firebaseUid": firebase_uid,
+    }
 
 @app.post("/api/v1/subscription/verify")
 def verify_subscription(
