@@ -21,6 +21,10 @@ class ProfessionalResponse(BaseModel):
     name: str
     email: str
     specialty: str
+    cpf: str
+    planType: Optional[str] = None
+    subscriptionStatus: Optional[str] = None
+    trialEndsAt: Optional[int] = None
     specialtyId: Optional[str] = None
     professionalRegister: Optional[str] = None
     phone: Optional[str] = None
@@ -28,6 +32,11 @@ class ProfessionalResponse(BaseModel):
 class ProfessionalLogin(BaseModel):
     email: str
     password: str
+
+class UserProfileUpdate(BaseModel):
+    phone_number: Optional[str] = None
+    specialty: Optional[str] = None
+    email: Optional[str] = None
 
 class ResetValidation(BaseModel):
     cpf: str
