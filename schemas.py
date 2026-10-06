@@ -1,5 +1,3 @@
-from datetime import datetime
-
 from pydantic import AliasChoices, BaseModel, Field
 from typing import Optional, Dict, Any
 from typing import Literal
@@ -26,8 +24,10 @@ class ProfessionalResponse(BaseModel):
     cpf: str
     planType: Optional[str] = None
     subscriptionStatus: Optional[str] = None
-    trialEndsAt: Optional[datetime] = None
-    subscriptionExpiresAt: Optional[datetime] = None
+    trialEndsAt: Optional[str] = None
+    subscriptionExpiresAt: Optional[str] = None
+    expirationDate: Optional[str] = None
+    isSubscriptionExpired: bool
     specialtyId: Optional[str] = None
     professionalRegister: Optional[str] = None
     phone: Optional[str] = None

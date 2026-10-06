@@ -111,6 +111,7 @@ def professional_response(prof: models.ProfessionalModel):
             detail="Profissional sem CPF cadastrado; atualize os dados cadastrais",
         )
 
+    expiration = subscription_expiration(prof)
     return {
         "id": prof.id,
         "name": prof.name,
@@ -122,9 +123,70 @@ def professional_response(prof: models.ProfessionalModel):
         "cpf": prof.cpf,
         "planType": prof.plan_type,
         "subscriptionStatus": prof.subscription_status,
-        "trialEndsAt": prof.trial_ends_at,
-        "subscriptionExpiresAt": prof.subscription_expires_at,
+        "trialEndsAt": format_expiration_date(prof.trial_ends_at),
+        "subscriptionExpiresAt": format_expiration_date(
+            prof.subscription_expires_at
+        ),
+        "expirationDate": format_expiration_date(expiration),
+        "isSubscriptionExpired": is_subscription_expired(prof),
     }
+
+
+def format_expiration_date(value: Optional[datetime]) -> Optional[str]:
+    if value is None:
+        return None
+    return _as_utc(value).date().isoformat()
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def subscription_expiration(
+    prof: models.ProfessionalModel,
+) -> Optional[datetime]:
+    subscription_status = (prof.subscription_status or "").upper()
+    if subscription_status == "TRIAL":
+        return prof.trial_ends_at
+    if subscription_status == "ACTIVE":
+        return prof.subscription_expires_at
+    return prof.subscription_expires_at or prof.trial_ends_at
+
+
+def is_subscription_expired(
+    prof: models.ProfessionalModel,
+    now: Optional[datetime] = None,
+) -> bool:
+    subscription_status = (prof.subscription_status or "").upper()
+    if subscription_status not in {"TRIAL", "ACTIVE"}:
+        return True
+
+    expiration = subscription_expiration(prof)
+    if expiration is None:
+        return True
+
+    current_time = _as_utc(now or datetime.now(timezone.utc))
+    return _as_utc(expiration) <= current_time
+
+
+def require_active_professional(
+    professional_id: str = Path(...),
+    current_user: models.ProfessionalModel = Depends(get_current_user),
+) -> models.ProfessionalModel:
+    if current_user.id != professional_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Acesso não autorizado a este profissional",
+        )
+    if is_subscription_expired(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Assinatura expirada",
+        )
+    return current_user
+
 
 @app.get("/")
 def read_root():
@@ -598,8 +660,14 @@ def delete_account(
         ) from exc
     return {"status": "success", "message": "Conta e dados excluídos com sucesso"}
 
-@app.get("/api/v1/patients/{professional_id}")
-def get_patients(professional_id: str, db: Session = Depends(get_db)):
+@app.get(
+    "/api/v1/patients/{professional_id}",
+    dependencies=[Depends(require_active_professional)],
+)
+def get_patients(
+    professional_id: str,
+    db: Session = Depends(get_db),
+):
     patients = db.query(models.PatientModel).filter(models.PatientModel.professional_id == professional_id).all()
     result = []
     for p in patients:
@@ -618,8 +686,15 @@ def get_patients(professional_id: str, db: Session = Depends(get_db)):
         })
     return result
 
-@app.post("/api/v1/patients/{professional_id}")
-def sync_patient(professional_id: str, patient: schemas.PatientSchema, db: Session = Depends(get_db)):
+@app.post(
+    "/api/v1/patients/{professional_id}",
+    dependencies=[Depends(require_active_professional)],
+)
+def sync_patient(
+    professional_id: str,
+    patient: schemas.PatientSchema,
+    db: Session = Depends(get_db),
+):
     if patient.professionalId != professional_id:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -675,9 +750,12 @@ def sync_patient(professional_id: str, patient: schemas.PatientSchema, db: Sessi
     db.commit()
     return patient
 
-@app.delete("/api/v1/patients/{professionalId}/{patientId}")
+@app.delete(
+    "/api/v1/patients/{professional_id}/{patientId}",
+    dependencies=[Depends(require_active_professional)],
+)
 def delete_patient(
-    professional_id: str = Path(..., alias="professionalId"),
+    professional_id: str = Path(...),
     patient_id: str = Path(..., alias="patientId"),
     db: Session = Depends(get_db),
 ):
@@ -706,11 +784,12 @@ def delete_patient(
     return {"status": "success"}
 
 @app.get(
-    "/api/v1/appointments/{professionalId}",
+    "/api/v1/appointments/{professional_id}",
     response_model=list[AppointmentSchema],
+    dependencies=[Depends(require_active_professional)],
 )
 def get_appointments(
-    professional_id: str = Path(..., alias="professionalId"),
+    professional_id: str = Path(...),
     db: Session = Depends(get_db),
 ):
     appointments = (
@@ -735,11 +814,12 @@ def get_appointments(
     ]
 
 @app.post(
-    "/api/v1/appointments/{professionalId}",
+    "/api/v1/appointments/{professional_id}",
     response_model=list[AppointmentSchema],
+    dependencies=[Depends(require_active_professional)],
 )
 def sync_appointments(
-    professional_id: str = Path(..., alias="professionalId"),
+    professional_id: str = Path(...),
     appointments: list[AppointmentSchema] = Body(...),
     db: Session = Depends(get_db),
 ):
@@ -812,9 +892,12 @@ def sync_appointments(
     db.commit()
     return appointments
 
-@app.delete("/api/v1/appointments/{professionalId}/{appointmentId}")
+@app.delete(
+    "/api/v1/appointments/{professional_id}/{appointmentId}",
+    dependencies=[Depends(require_active_professional)],
+)
 def delete_appointment(
-    professional_id: str = Path(..., alias="professionalId"),
+    professional_id: str = Path(...),
     appointment_id: str = Path(..., alias="appointmentId"),
     delete_all: bool = Query(False, alias="deleteAll"),
     db: Session = Depends(get_db),
@@ -862,11 +945,12 @@ def delete_appointment(
     return {"status": "success"}
 
 @app.get(
-    "/api/v1/evolutions/{professionalId}",
+    "/api/v1/evolutions/{professional_id}",
     response_model=list[EvolutionRecordSchema],
+    dependencies=[Depends(require_active_professional)],
 )
 def get_evolutions(
-    professional_id: str = Path(..., alias="professionalId"),
+    professional_id: str = Path(...),
     db: Session = Depends(get_db),
 ):
     evolutions = (
@@ -891,11 +975,12 @@ def get_evolutions(
     ]
 
 @app.post(
-    "/api/v1/evolutions/{professionalId}",
+    "/api/v1/evolutions/{professional_id}",
     response_model=list[EvolutionRecordSchema],
+    dependencies=[Depends(require_active_professional)],
 )
 def sync_evolutions(
-    professional_id: str = Path(..., alias="professionalId"),
+    professional_id: str = Path(...),
     evolutions: list[EvolutionRecordSchema] = Body(...),
     db: Session = Depends(get_db),
 ):
