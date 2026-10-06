@@ -177,9 +177,7 @@ def register(prof: schemas.ProfessionalCreate, db: Session = Depends(get_db)):
         device_id=prof.deviceId,
         firebase_uid=prof.firebaseUid,
         plan_type="FREE",
-        trial_ends_at=int(
-            (datetime.now(timezone.utc) + timedelta(days=7)).timestamp() * 1000
-        ),
+        trial_ends_at=datetime.now(timezone.utc) + timedelta(days=7),
         subscription_status="TRIAL",
         name=prof.name,
         email=prof.email,
@@ -311,17 +309,15 @@ def verify_subscription(
     expiration = datetime.now(timezone.utc) + timedelta(
         days=plan_durations[sub_data.planType]
     )
-    expiration_timestamp = int(expiration.timestamp() * 1000)
-
     current_user.subscription_status = "ACTIVE"
     current_user.plan_type = sub_data.planType
-    current_user.subscription_expires_at = expiration_timestamp
+    current_user.subscription_expires_at = expiration
     db.commit()
 
     return {
         "status": "success",
         "message": "Assinatura ativada com sucesso",
-        "subscriptionExpiresAt": expiration_timestamp,
+        "subscriptionExpiresAt": expiration,
     }
 
 def restore_firebase_email(firebase_uid: str, email: str, firebase_app) -> None:
