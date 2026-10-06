@@ -370,6 +370,16 @@ def update_profile(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="A especialidade não pode estar vazia",
         )
+    if "name" in updates and updates["name"] is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="O nome não pode ser nulo",
+        )
+    if "name" in updates and not updates["name"].strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="O nome não pode estar vazio",
+        )
 
     duplicate_conditions = []
     if updates.get("email") and updates["email"] != current_user.email:
@@ -447,11 +457,18 @@ def update_profile(
                 detail="Não foi possível atualizar o e-mail no Firebase",
             ) from exc
 
-    if "phone_number" in updates:
-        current_user.phone = updates["phone_number"]
-    if "specialty" in updates:
-        current_user.specialty = updates["specialty"]
-    if requested_email is not None:
+    profile_field_mapping = {
+        "name": "name",
+        "phone_number": "phone",
+        "specialty": "specialty",
+        "specialty_id": "specialty_id",
+        "professional_register": "professional_register",
+        "signature_url": "signature_url",
+    }
+    for request_field, model_field in profile_field_mapping.items():
+        if request_field in updates:
+            setattr(current_user, model_field, updates[request_field])
+    if "email" in updates:
         current_user.email = requested_email
 
     try:
@@ -471,6 +488,19 @@ def update_profile(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Não foi possível salvar as alterações do perfil",
+        ) from exc
+
+    try:
+        db.refresh(current_user)
+    except SQLAlchemyError as exc:
+        logger.exception(
+            "Os dados do perfil foram salvos, mas não puderam ser recarregados "
+            "para o profissional %s",
+            current_user.id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Os dados foram salvos, mas não foi possível recarregar o perfil",
         ) from exc
 
     return professional_response(current_user)

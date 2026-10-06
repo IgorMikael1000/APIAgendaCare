@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 from typing import Optional, Dict, Any
 from typing import Literal
 
@@ -38,9 +38,28 @@ class GoogleLoginRequest(BaseModel):
     idToken: str
 
 class UserProfileUpdate(BaseModel):
-    phone_number: Optional[str] = None
+    name: Optional[str] = None
+    phone_number: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("phone", "phone_number"),
+    )
     specialty: Optional[str] = None
     email: Optional[str] = None
+    specialty_id: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("specialtyId", "specialty_id"),
+    )
+    professional_register: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "professionalRegister",
+            "professional_register",
+        ),
+    )
+    signature_url: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("signatureUrl", "signature_url"),
+    )
 
 class SubscriptionVerifyRequest(BaseModel):
     purchaseToken: str
