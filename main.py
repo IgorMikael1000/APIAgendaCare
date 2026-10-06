@@ -420,6 +420,7 @@ def update_profile(
     return {
         "message": "Perfil atualizado com sucesso",
         "profile": {
+            "id": current_user.id,
             "email": current_user.email,
             "specialty": current_user.specialty,
             "phone_number": current_user.phone,
@@ -452,6 +453,13 @@ def delete_account(
     current_user: models.ProfessionalModel = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    firebase_uid = current_user.firebase_uid
+    if not firebase_uid:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="O usuário não possui um UID Firebase vinculado",
+        )
+
     db.query(models.EvolutionRecordModel).filter(
         models.EvolutionRecordModel.professional_id == current_user.id,
     ).delete(synchronize_session=False)
@@ -464,7 +472,38 @@ def delete_account(
     db.query(models.ProfessionalModel).filter(
         models.ProfessionalModel.id == current_user.id,
     ).delete(synchronize_session=False)
-    db.commit()
+
+    try:
+        firebase_app = firebase_admin.get_app()
+        auth.delete_user(firebase_uid, app=firebase_app)
+    except auth.UserNotFoundError:
+        logger.info(
+            "Usuário Firebase %s já foi removido; prosseguindo com exclusão local",
+            firebase_uid,
+        )
+    except exceptions.FirebaseError as exc:
+        db.rollback()
+        logger.exception(
+            "Não foi possível remover o usuário Firebase %s",
+            firebase_uid,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Não foi possível excluir a conta no Firebase",
+        ) from exc
+
+    try:
+        db.commit()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.exception(
+            "Não foi possível excluir os dados locais do profissional %s",
+            current_user.id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Não foi possível excluir os dados da conta",
+        ) from exc
     return {"status": "success", "message": "Conta e dados excluídos com sucesso"}
 
 @app.get("/api/v1/patients/{professional_id}")
