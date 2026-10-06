@@ -333,6 +333,28 @@ def restore_firebase_email(firebase_uid: str, email: str, firebase_app) -> None:
             detail="Não foi possível sincronizar o e-mail do perfil",
         ) from exc
 
+@app.get(
+    "/api/v1/auth/profile",
+    response_model=schemas.ProfessionalResponse,
+)
+def get_profile(
+    current_user: models.ProfessionalModel = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        db.refresh(current_user)
+    except SQLAlchemyError as exc:
+        logger.exception(
+            "Não foi possível recarregar o perfil do profissional %s",
+            current_user.id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Não foi possível carregar o perfil atualizado",
+        ) from exc
+
+    return professional_response(current_user)
+
 @app.patch("/api/v1/auth/profile")
 def update_profile(
     profile: schemas.UserProfileUpdate,
