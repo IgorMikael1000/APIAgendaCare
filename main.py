@@ -417,19 +417,7 @@ def update_profile(
             detail="Não foi possível salvar as alterações do perfil",
         ) from exc
 
-    return {
-        "message": "Perfil atualizado com sucesso",
-        "profile": {
-            "id": current_user.id,
-            "email": current_user.email,
-            "specialty": current_user.specialty,
-            "phone_number": current_user.phone,
-            "planType": current_user.plan_type,
-            "subscriptionStatus": current_user.subscription_status,
-            "trialEndsAt": current_user.trial_ends_at,
-            "subscriptionExpiresAt": current_user.subscription_expires_at,
-        },
-    }
+    return professional_response(current_user)
 
 @app.post("/api/v1/auth/validate-reset")
 def validate_reset(data: schemas.ResetValidation, db: Session = Depends(get_db)):
