@@ -9,13 +9,12 @@ from fastapi import (
     Body,
     Depends,
     FastAPI,
-    HTTPAuthorizationCredentials,
     HTTPException,
     Path,
     Query,
     status,
 )
-from fastapi.security import HTTPBearer
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from firebase_admin import auth
 from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
