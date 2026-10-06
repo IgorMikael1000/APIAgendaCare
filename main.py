@@ -1,12 +1,14 @@
 import hmac
+import json
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 from threading import Lock
 from typing import Optional
 
 import bcrypt
 import firebase_admin
-from firebase_admin import exceptions
+from firebase_admin import auth, credentials, exceptions
 from fastapi import (
     Body,
     Depends,
@@ -17,7 +19,6 @@ from fastapi import (
     status,
 )
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from firebase_admin import auth
 from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -36,10 +37,12 @@ logger = logging.getLogger(__name__)
 
 
 def get_current_user(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+    bearer_credentials: Optional[HTTPAuthorizationCredentials] = Depends(
+        bearer_scheme
+    ),
     db: Session = Depends(get_db),
 ) -> models.ProfessionalModel:
-    if credentials is None:
+    if bearer_credentials is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Autenticação obrigatória",
@@ -53,11 +56,17 @@ def get_current_user(
             try:
                 firebase_app = firebase_admin.get_app()
             except ValueError:
-                firebase_app = firebase_admin.initialize_app()
+                firebase_cred_env = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
+                if firebase_cred_env:
+                    cred_dict = json.loads(firebase_cred_env)
+                    cred = credentials.Certificate(cred_dict)
+                    firebase_app = firebase_admin.initialize_app(cred)
+                else:
+                    firebase_app = firebase_admin.initialize_app()
 
     try:
         decoded_token = auth.verify_id_token(
-            credentials.credentials,
+            bearer_credentials.credentials,
             app=firebase_app,
             check_revoked=True,
         )
