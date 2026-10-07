@@ -1,3 +1,4 @@
+from datetime import datetime
 from pydantic import AliasChoices, BaseModel, Field
 from typing import Optional, Dict, Any
 from typing import Literal
@@ -66,6 +67,50 @@ class UserProfileUpdate(BaseModel):
 class SubscriptionVerifyRequest(BaseModel):
     purchaseToken: str
     planType: Literal["MONTHLY", "QUARTERLY", "SEMIANNUAL", "ANNUAL"]
+
+
+class GooglePubSubMessage(BaseModel):
+    data: str = Field(min_length=1)
+
+
+class GooglePubSubPushRequest(BaseModel):
+    message: GooglePubSubMessage
+
+
+class GooglePlaySubscriptionNotification(BaseModel):
+    version: str
+    notificationType: int
+    purchaseToken: str = Field(min_length=1)
+    subscriptionId: str = Field(min_length=1)
+
+
+class GooglePlayTestNotification(BaseModel):
+    version: str
+
+
+class GooglePlayDeveloperNotification(BaseModel):
+    version: str
+    packageName: Optional[str] = None
+    eventTimeMillis: Optional[str] = None
+    subscriptionNotification: Optional[GooglePlaySubscriptionNotification] = None
+    testNotification: Optional[GooglePlayTestNotification] = None
+
+
+class GooglePlayLineItem(BaseModel):
+    productId: str
+    expiryTime: Optional[datetime] = None
+
+
+class GooglePlayExternalAccountIdentifiers(BaseModel):
+    obfuscatedExternalAccountId: Optional[str] = None
+
+
+class GooglePlaySubscriptionDetails(BaseModel):
+    subscriptionState: str
+    linkedPurchaseToken: Optional[str] = None
+    externalAccountIdentifiers: Optional[GooglePlayExternalAccountIdentifiers] = None
+    lineItems: list[GooglePlayLineItem]
+
 
 class ResetValidation(BaseModel):
     cpf: str

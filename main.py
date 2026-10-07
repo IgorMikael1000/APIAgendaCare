@@ -1,3 +1,5 @@
+import base64
+import binascii
 import hmac
 import json
 import logging
@@ -5,9 +7,14 @@ import os
 from datetime import datetime, timedelta, timezone
 from threading import Lock
 from typing import Optional
+from urllib.parse import quote
 
 import bcrypt
 import firebase_admin
+import google.auth
+from google.auth.transport.requests import Request as GoogleAuthRequest
+from google.oauth2 import service_account
+import requests
 from firebase_admin import auth, credentials, exceptions
 from fastapi import (
     Body,
@@ -19,6 +26,7 @@ from fastapi import (
     status,
 )
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import ValidationError
 from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -34,6 +42,9 @@ app = FastAPI(title="AgendaCare API", version="1.0.0")
 bearer_scheme = HTTPBearer(auto_error=False)
 firebase_app_lock = Lock()
 logger = logging.getLogger(__name__)
+
+GOOGLE_PLAY_SERVICE_ACCOUNT_ENV = "GOOGLE_PLAY_SERVICE_ACCOUNT_JSON"
+GOOGLE_PLAY_PACKAGE_ENV = "GOOGLE_PLAY_PACKAGE_NAME"
 
 
 def get_firebase_app():
@@ -160,7 +171,7 @@ def is_subscription_expired(
     now: Optional[datetime] = None,
 ) -> bool:
     subscription_status = (prof.subscription_status or "").upper()
-    if subscription_status not in {"TRIAL", "ACTIVE"}:
+    if subscription_status not in {"TRIAL", "ACTIVE", "CANCELED"}:
         return True
 
     expiration = subscription_expiration(prof)
@@ -374,6 +385,7 @@ def verify_subscription(
     current_user.subscription_status = "ACTIVE"
     current_user.plan_type = sub_data.planType
     current_user.subscription_expires_at = expiration
+    current_user.purchase_token = sub_data.purchaseToken
     db.commit()
 
     return {
@@ -381,6 +393,206 @@ def verify_subscription(
         "message": "Assinatura ativada com sucesso",
         "subscriptionExpiresAt": expiration,
     }
+
+
+def fetch_google_play_subscription(
+    purchase_token: str,
+    package_name: str,
+) -> schemas.GooglePlaySubscriptionDetails:
+    service_account_json = os.getenv(GOOGLE_PLAY_SERVICE_ACCOUNT_ENV)
+    if not service_account_json:
+        logger.error("%s não está configurada", GOOGLE_PLAY_SERVICE_ACCOUNT_ENV)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Credencial da Google Play não configurada",
+        )
+
+    try:
+        service_account_info = json.loads(service_account_json)
+        credentials = service_account.Credentials.from_service_account_info(
+            service_account_info,
+            scopes=["https://www.googleapis.com/auth/androidpublisher"],
+        )
+        credentials.refresh(GoogleAuthRequest())
+    except (ValueError, google.auth.exceptions.GoogleAuthError) as exc:
+        logger.exception("Não foi possível obter credencial da Google Play")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Não foi possível autenticar na Google Play Developer API",
+        ) from exc
+
+    url = (
+        "https://androidpublisher.googleapis.com/androidpublisher/v3/"
+        f"applications/{quote(package_name, safe='')}/purchases/subscriptionsv2/"
+        f"tokens/{quote(purchase_token, safe='')}"
+    )
+    try:
+        response = requests.get(
+            url,
+            headers={"Authorization": f"Bearer {credentials.token}"},
+            timeout=(5, 15),
+        )
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        logger.error(
+            "Consulta à Google Play Developer API falhou (%s)",
+            type(exc).__name__,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Não foi possível consultar a assinatura na Google Play",
+        ) from exc
+
+    try:
+        return schemas.GooglePlaySubscriptionDetails.model_validate(
+            response.json()
+        )
+    except (ValueError, ValidationError) as exc:
+        logger.exception("Resposta inválida da Google Play Developer API")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="A resposta da Google Play não contém dados válidos",
+        ) from exc
+
+
+@app.post("/api/v1/webhooks/google-play", status_code=status.HTTP_200_OK)
+def google_play_webhook(
+    payload: schemas.GooglePubSubPushRequest,
+    db: Session = Depends(get_db),
+):
+    try:
+        notification_data = base64.b64decode(
+            payload.message.data,
+            validate=True,
+        )
+        notification = schemas.GooglePlayDeveloperNotification.model_validate_json(
+            notification_data
+        )
+    except (binascii.Error, UnicodeDecodeError, ValidationError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Payload inválido do Google Pub/Sub",
+        ) from exc
+
+    subscription_notification = notification.subscriptionNotification
+    if subscription_notification is None:
+        return {"status": "acknowledged"}
+
+    package_name = (
+        notification.packageName or os.getenv(GOOGLE_PLAY_PACKAGE_ENV)
+    )
+    if not package_name:
+        logger.error("%s não está configurada", GOOGLE_PLAY_PACKAGE_ENV)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Nome do pacote da Google Play não configurado",
+        )
+
+    subscription = fetch_google_play_subscription(
+        subscription_notification.purchaseToken,
+        package_name,
+    )
+    plan_types = {
+        "plan_monthly": "MONTHLY",
+        "plan_quarterly": "QUARTERLY",
+        "plan_semiannual": "SEMIANNUAL",
+        "plan_annual": "ANNUAL",
+    }
+    subscription_statuses = {
+        "SUBSCRIPTION_STATE_ACTIVE": "ACTIVE",
+        "SUBSCRIPTION_STATE_IN_GRACE_PERIOD": "ACTIVE",
+        "SUBSCRIPTION_STATE_CANCELED": "CANCELED",
+        "SUBSCRIPTION_STATE_ON_HOLD": "ON_HOLD",
+        "SUBSCRIPTION_STATE_PAUSED": "PAUSED",
+        "SUBSCRIPTION_STATE_EXPIRED": "EXPIRED",
+        "SUBSCRIPTION_STATE_PENDING": "PENDING",
+        "SUBSCRIPTION_STATE_PENDING_PURCHASE_CANCELED": "EXPIRED",
+    }
+
+    if subscription.subscriptionState not in subscription_statuses:
+        logger.error(
+            "Estado de assinatura Google Play não suportado: %s",
+            subscription.subscriptionState,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Estado de assinatura da Google Play não reconhecido",
+        )
+
+    valid_line_items = [
+        item
+        for item in subscription.lineItems
+        if item.productId in plan_types and item.expiryTime is not None
+    ]
+    if not valid_line_items:
+        logger.error(
+            "Google Play retornou assinatura sem SKU conhecido ou expiração"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="A assinatura da Google Play não contém plano ou expiração válidos",
+        )
+    current_line_item = max(
+        valid_line_items,
+        key=lambda item: item.expiryTime or datetime.min.replace(
+            tzinfo=timezone.utc
+        ),
+    )
+
+    linked_tokens = {
+        subscription_notification.purchaseToken,
+        subscription.linkedPurchaseToken,
+    }
+    linked_tokens.discard(None)
+    account_id = (
+        subscription.externalAccountIdentifiers.obfuscatedExternalAccountId
+        if subscription.externalAccountIdentifiers is not None
+        else None
+    )
+    user_filters = [
+        models.ProfessionalModel.purchase_token.in_(linked_tokens)
+    ]
+    if account_id:
+        user_filters.extend(
+            [
+                models.ProfessionalModel.id == account_id,
+                models.ProfessionalModel.firebase_uid == account_id,
+            ]
+        )
+    professional = (
+        db.query(models.ProfessionalModel)
+        .filter(or_(*user_filters))
+        .first()
+    )
+    if professional is None:
+        logger.warning(
+            "Nenhum profissional corresponde à notificação Google Play "
+            "(subscriptionId=%s)",
+            subscription_notification.subscriptionId,
+        )
+        return {"status": "acknowledged", "result": "professional_not_found"}
+
+    professional.purchase_token = subscription_notification.purchaseToken
+    professional.subscription_status = subscription_statuses[
+        subscription.subscriptionState
+    ]
+    professional.plan_type = plan_types[current_line_item.productId]
+    professional.subscription_expires_at = current_line_item.expiryTime
+    try:
+        db.commit()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.exception(
+            "Não foi possível atualizar a assinatura do profissional %s",
+            professional.id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Não foi possível atualizar a assinatura",
+        ) from exc
+
+    return {"status": "acknowledged"}
+
 
 def restore_firebase_email(firebase_uid: str, email: str, firebase_app) -> None:
     try:

@@ -10,6 +10,7 @@ class ProfessionalModel(Base):
     trial_ends_at = Column(DateTime(timezone=True), nullable=True)
     subscription_status = Column(String(50), default="TRIAL")
     subscription_expires_at = Column(DateTime(timezone=True), nullable=True)
+    purchase_token = Column(String(512), unique=True, index=True, nullable=True)
     name = Column(String(255), nullable=False)
     email = Column(String(255), unique=True, index=True, nullable=False)
     specialty = Column(String(100), nullable=False)
